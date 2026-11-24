@@ -19,7 +19,7 @@ You can also rename tabs from the list without visiting them.
 ## Install
 
 ```sh
-git clone <this repository> rex-tabjump
+git clone https://github.com/JaredVogt/rex-tabjump.git
 cd rex-tabjump
 ./install.sh
 ```
