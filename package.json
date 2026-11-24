@@ -1,0 +1,16 @@
+{
+  "name": "rex-tabjump",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Jump to any tab in any Rex session, hop.nvim style, and rename tabs from the list.",
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test hop.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

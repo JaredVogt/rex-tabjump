@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jump to Tab</title>
+<style>
+  /* Everything about the look is here. One thing moves: the slow fade on a
+     tab that is blocked on you. It animates opacity only, which the web view
+     composites without repainting the page. */
+  :root {
+    --bg: #0b2e1a;
+    --fg: #e4f1e8;
+    --dim: #8fb09c;
+    --session: #8cdcaa;
+    --selected: #1f5a37;
+    --chip-bg: #f2c94c;
+    --chip-fg: #14210f;
+    --match: #ffe08a;
+    --box: rgba(255, 255, 255, 0.06);
+    --working: #f2c94c;
+    --waiting: #d79bf0;
+    --error: #ff8a80;
+    --done: #8cdcaa;
+    --line: rgba(255, 255, 255, 0.14);
+    /* Laid over the background picture so text stays readable. */
+    --tint: rgba(6, 8, 18, 0.58);
+  }
+  /* With a background picture (a file named background.gif, .png, .jpg or
+     .webp beside this page), the picture replaces the green and the greens
+     that sat on it become neutral. */
+  body.has-bg {
+    --dim: #c9cfdd;
+    --session: #ffffff;
+    --selected: rgba(255, 255, 255, 0.2);
+    --box: rgba(0, 0, 0, 0.35);
+    --done: #a8e6bf;
+    background: #000 url("background") center / cover no-repeat;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  }
+  body.has-bg::before { content: ""; position: fixed; inset: 0; background: var(--tint); pointer-events: none; }
+  body.has-bg > * { position: relative; }
+  body.has-bg .chip { text-shadow: none; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.35 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 10px 10px;
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 0 8px; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  #count { color: var(--dim); font-size: 12px; }
+  /* What has been typed, the mode, and the session the list is narrowed to. */
+  #filter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 8px 4px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: var(--box);
+    min-height: 34px;
+    white-space: pre;
+  }
+  #filter.type { border-color: var(--session); }
+  #filter.rename { border-color: #e6c35c; }
+  #filter.rename .mode { color: #e6c35c; opacity: 1; }
+  #filter .placeholder { color: var(--dim); opacity: 0.6; font-weight: 400; }
+  /* The mode is a label, not something typed: keep it faint, like a placeholder. */
+  #filter .mode { color: var(--dim); opacity: 0.5; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: none; }
+  #filter .typed { flex: 1; font: 600 14px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
+  #filter .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--fg); vertical-align: text-bottom; margin-left: 1px; }
+  #filter .scope { color: var(--dim); font-size: 12px; }
+  #filter .scope.on { color: var(--session); font-weight: 600; }
+  /* The sessions / status switch, and a bubble for each status in the list. */
+  #bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 8px 0; white-space: pre; }
+  .switch { display: flex; background: var(--box); border-radius: 7px; padding: 2px; }
+  .switch .opt { padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; color: var(--dim); }
+  .switch .opt.on { background: var(--selected); color: var(--fg); }
+  .bubbles { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+  .bubble {
+    display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px;
+    background: var(--box); border: 1px solid transparent; font-size: 12px; font-weight: 600;
+  }
+  .bubble .n { color: var(--dim); font-weight: 400; }
+  .bubble.on { border-color: currentColor; background: var(--selected); }
+  #list { flex: 1; overflow-y: auto; }
+  .session, .group {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 12px 8px 4px;
+    white-space: pre;
+  }
+  .session { color: var(--session); }
+  .session .meta, .group .n { color: var(--dim); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .session .meta { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* A tab: its name and what it is on the first line; under them, what it
+     says it is doing and for how long. A tab with nothing to say is one line. */
+  .row {
+    display: grid;
+    grid-template-columns: 8px minmax(40%, 1fr) minmax(0, auto);
+    column-gap: 10px;
+    row-gap: 1px;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 7px;
+  }
+  /* Tabs that want you. Blocked: a purple tint that fades in and out.
+     Finished and not yet looked at, or stopped on an error: a steady tint. */
+  .row.st-blocked, .row.st-done, .row.st-error, .row.st-failed { position: relative; }
+  .row.st-blocked { --tone: var(--waiting); background: color-mix(in srgb, var(--tone) 26%, transparent); }
+  .row.st-done { --tone: var(--done); background: color-mix(in srgb, var(--tone) 28%, transparent); }
+  .row.st-error, .row.st-failed { --tone: var(--error); background: color-mix(in srgb, var(--tone) 28%, transparent); }
+  .row.st-blocked::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: color-mix(in srgb, var(--tone) 45%, transparent);
+    animation: wants-you 1.4s ease-in-out infinite alternate;
+  }
+  .row.st-blocked > * { position: relative; }
+  .row.st-blocked .when, .row.st-blocked .right .blocked, .row.st-done .when, .row.st-done .right .done { font-weight: 600; }
+  @keyframes wants-you { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .row.st-blocked::before { animation: none; opacity: 0.6; } }
+  .row.selected { background: var(--selected); }
+  /* A selected row that wants you keeps its colour: a deeper tint and a ring. */
+  .row.selected:is(.st-blocked, .st-done, .st-error, .st-failed) {
+    background: color-mix(in srgb, var(--tone) 42%, transparent);
+    box-shadow: inset 0 0 0 1.5px var(--tone);
+  }
+  .hinting .row.st-blocked::before { animation: none; opacity: 0; }
+  .head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .title { white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .row.selected .title { font-weight: 600; }
+  .right {
+    display: flex; gap: 10px; align-items: baseline; justify-content: flex-end;
+    color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; min-width: 0;
+  }
+  .right > * { flex: none; }
+  .right .from { color: var(--session); font-weight: 600; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .sub { grid-column: 2; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .when { grid-column: 3; text-align: right; font-size: 12px; white-space: nowrap; }
+  .branch { display: inline-flex; align-items: center; gap: 3px; }
+  .branch svg { width: 10px; height: 10px; flex: none; }
+  /* A hint sits over the first characters of the word part it stands for. */
+  .chip {
+    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--chip-bg);
+    color: var(--chip-fg);
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin-right: 1px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .seg.match { color: var(--match); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  /* With hints up, everything that isn't a matched word steps back. */
+  .hinting .seg:not(.match), .hinting .right, .hinting .sub, .hinting .when, .hinting .dot,
+  .hinting .tag, .hinting .n, .hinting .meta { opacity: 0.35; }
+  /* Filled while something is happening or wants you, hollow when quiet. */
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; border: 1.5px solid var(--dim); opacity: 0.6; }
+  .dot.working, .dot.blocked, .dot.failed, .dot.error, .dot.done { background: currentColor; border-color: currentColor; opacity: 1; }
+  .working { color: var(--working); }
+  .blocked { color: var(--waiting); }
+  .failed, .error { color: var(--error); }
+  .done { color: var(--done); }
+  .quiet { color: var(--dim); }
+  .tag {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    border: 1px solid var(--line); color: var(--dim); border-radius: 4px; padding: 0 4px; flex: none;
+  }
+  .tag.here { color: var(--session); border-color: var(--session); }
+  .tag.bad { color: var(--error); border-color: var(--error); }
+  /* In a narrow panel the folder and branch go first. */
+  @media (max-width: 520px) { .right .cwd, .right .branch { display: none; } }
+  .empty { color: var(--dim); padding: 12px 8px; }
+  footer { color: var(--dim); font-size: 12px; padding: 8px 8px 0; }
+  footer.error { color: var(--error); }
+  kbd { font: inherit; color: var(--fg); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-branch" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+    <circle cx="3" cy="2.5" r="1.4"/><circle cx="3" cy="9.5" r="1.4"/><circle cx="9" cy="4" r="1.4"/>
+    <path d="M3 4v4M9 5.4c0 2-2.5 1.6-6 2.6"/>
+  </symbol>
+</svg>
+<header><h1>Jump to tab</h1><span id="count"></span></header>
+<div id="filter"></div>
+<div id="bar"></div>
+<div id="list"></div>
+<footer id="footer"></footer>
+<script type="module">
+// All the behaviour (modes, matching, hints) is in hop.ts, shared with the
+// terminal panel and served here with its types stripped. This script only
+// maps keys in and draws the view out.
+import { createState, press, renamed, setGroup, statusOf, toggleStatus, view } from "./hop.js";
+
+const el = (id) => document.getElementById(id);
+const NAMED = new Set(["Escape", "Enter", "Backspace", "Tab", "ArrowUp", "ArrowDown"]);
+const opened = Date.now(); // ages are worked out once, so nothing ticks
+
+let state = null;  // hop's state, once the tabs have arrived
+let failure = "";  // why there is no state
+let busy = false;  // a jump, rename or close is in flight: take no more keys
+
+function node(tag, className, text) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+// A row's text. The hint covers the start of the segment it belongs to.
+function segments(parent, list) {
+  for (const seg of list) {
+    const span = node("span", seg.match ? "seg match" : "seg");
+    if (seg.hint) {
+      const hidden = [...seg.text].slice([...seg.hint].length).join("");
+      span.append(node("span", "chip", seg.hint), hidden);
+    } else {
+      span.textContent = seg.text;
+    }
+    parent.append(span);
+  }
+}
+
+// How long ago `since` was, in the largest unit that fits: 40s, 6m, 3h, 2d.
+function age(since) {
+  if (!since) return "";
+  const seconds = Math.max(0, Math.round((opened - since) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 48 * 3600) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// What a blocked program is waiting on, in place of the bare word "blocked".
+const NEEDS = { permission: "needs permission", question: "has a question", auth: "needs sign-in" };
+
+// "working for 2m", "needs permission for 6m", "done 20m ago", or for a
+// quiet tab just "14m".
+function statusText(tab) {
+  const status = statusOf(tab);
+  const span = node("span", status);
+  const word = NEEDS[tab.kind] ?? status;
+  const ago = age(tab.since);
+  if (tab.status === "") span.textContent = ago;
+  else if (ago === "") span.textContent = word;
+  else span.textContent = status === "working" || status === "blocked" ? `${word} for ${ago}` : `${word} ${ago} ago`;
+  return span;
+}
+
+// The line under a tab's name: what it says it is doing, or failing that
+// the page in its browser pane. Null when there is neither.
+function subline(tab) {
+  if (tab.message) return tab.message + (tab.app ? ` · ${tab.app}` : "");
+  if (!tab.page) return null;
+  const more = tab.pageTabs > 1 ? ` (+${tab.pageTabs - 1} more)` : "";
+  return tab.page + more + (tab.pageLoading ? ", loading" : "");
+}
+
+function tabRow(row, grouped) {
+  const tab = row.tab;
+  const line = node("div", `row st-${statusOf(tab)}`);
+  if (row.selected) line.classList.add("selected");
+
+  const title = node("span", "title");
+  segments(title, row.segments);
+  const head = node("span", "head");
+  head.append(title);
+  if (tab.current) head.append(node("span", "tag here", "here"));
+  else if (tab.active) head.append(node("span", "tag", "active"));
+  if (tab.exit !== 0) head.append(node("span", "tag bad", `exit ${tab.exit}`));
+
+  // Under a status heading the session isn't above the row, so it goes here.
+  const right = node("span", "right");
+  if (grouped === "status") right.append(node("span", "from", tab.session));
+  if (tab.program) right.append(node("span", "mono", tab.program));
+  if (tab.cwd) right.append(node("span", "cwd", tab.cwd.split("/").filter(Boolean).pop() ?? tab.cwd));
+  if (tab.branch) {
+    const branch = node("span", "branch");
+    branch.innerHTML = '<svg><use href="#i-branch"/></svg>';
+    branch.append(tab.branch);
+    right.append(branch);
+  }
+  if (tab.panes > 1) right.append(node("span", "", `${tab.panes} panes`));
+  if (tab.floating > 0) right.append(node("span", "", `${tab.floating} floating`));
+
+  line.append(node("span", `dot ${statusOf(tab)}`), head, right);
+  const sub = subline(tab);
+  const status = statusText(tab);
+  if (sub !== null) {
+    const when = node("span", "when");
+    when.append(status);
+    line.append(node("span", "sub", sub), when);
+  } else if (status.textContent !== "") {
+    right.append(status);
+  }
+  line.addEventListener("click", () => go(tab));
+  return line;
+}
+
+function render() {
+  const footer = el("footer");
+  if (state === null) {
+    footer.className = failure ? "error" : "";
+    footer.textContent = failure;
+    return;
+  }
+  const v = view(state);
+  document.body.classList.toggle("hinting", v.hinting);
+  el("count").textContent = `${v.shown}/${v.total} tabs · ${v.sessions} sessions`;
+
+  const typed = node("span", "typed", v.typed);
+  if (v.mode !== "move" || v.typed !== "") typed.append(node("span", "caret"));
+  if (v.mode === "rename" && v.typed === "") typed.append(node("span", "placeholder", v.placeholder));
+  const narrowed = [v.filterName, v.statusFilter && `${v.statusFilter} only`].filter(Boolean).join(" · ");
+  const scope = node("span", narrowed ? "scope on" : "scope", narrowed || "All sessions");
+  const filter = el("filter");
+  filter.className = v.mode;
+  filter.replaceChildren(node("span", "mode", v.mode), typed, scope);
+
+  const pick = (change) => () => {
+    if (busy) return;
+    change();
+    render();
+  };
+  const sw = node("div", "switch");
+  for (const option of v.options) {
+    const opt = node("span", option.on ? "opt on" : "opt");
+    segments(opt, option.segments);
+    opt.addEventListener("click", pick(() => setGroup(state, option.group)));
+    sw.append(opt);
+  }
+  const bubbles = node("div", "bubbles");
+  for (const bubble of v.bubbles) {
+    const b = node("span", `bubble ${bubble.status}${bubble.on ? " on" : ""}`);
+    const word = node("span");
+    segments(word, bubble.segments);
+    b.append(node("span", `dot ${bubble.status}`), word, node("span", "n", String(bubble.count)));
+    b.addEventListener("click", pick(() => toggleStatus(state, bubble.status)));
+    bubbles.append(b);
+  }
+  el("bar").replaceChildren(sw, bubbles);
+
+  const list = el("list");
+  list.replaceChildren();
+  let selectedRow = null;
+  for (const row of v.rows) {
+    if (row.kind === "session") {
+      const head = node("div", "session");
+      const name = node("span");
+      segments(name, row.segments);
+      head.append(name);
+      const clients = state.tabs.find((tab) => tab.sessionId === row.sessionId)?.clients ?? [];
+      if (clients.length > 0) head.append(node("span", "meta", `open on ${clients.join(" and ")}`));
+      list.append(head);
+      continue;
+    }
+    if (row.kind === "status") {
+      const head = node("div", `group ${row.status}`);
+      const name = node("span");
+      segments(name, row.segments);
+      head.append(name, node("span", "n", String(row.count)));
+      list.append(head);
+      continue;
+    }
+    const line = tabRow(row, v.group);
+    if (row.selected) selectedRow = line;
+    list.append(line);
+  }
+  if (v.shown === 0) list.append(node("div", "empty", "No tabs."));
+  if (selectedRow) selectedRow.scrollIntoView({ block: "nearest" });
+
+  footer.className = v.message ? "error" : "";
+  footer.textContent = v.message || v.help;
+}
+
+async function post(route, data) {
+  const res = await fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data ?? {}) });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+}
+
+// The server finds a tab by its position in the list it gave out.
+function indexOf(tab) {
+  return state.tabs.findIndex((t) => t.sessionId === tab.sessionId && t.windowId === tab.windowId);
+}
+
+// Renames the tab and stays open, with the new name in the list.
+async function name(tab, title) {
+  busy = true;
+  try {
+    await post("rename", { index: indexOf(tab), title });
+    renamed(tab, title);
+  } catch (err) {
+    state.message = `Couldn't rename: ${err.message}`;
+  }
+  busy = false;
+  render();
+}
+
+async function go(tab) {
+  if (busy || state === null) return;
+  busy = true;
+  try {
+    const index = indexOf(tab);
+    await post("jump", { index });
+  } catch (err) {
+    busy = false;
+    state.message = `Couldn't jump: ${err.message}`;
+    render();
+  }
+}
+
+function close() {
+  busy = true;
+  post("close").catch(() => {});
+}
+
+// The key as hop's press() wants it, or null for one that isn't ours.
+function keyOf(e) {
+  if (e.metaKey || e.altKey) return null;
+  if (e.ctrlKey) return { p: "ArrowUp", n: "ArrowDown", r: "Rename", u: "Clear" }[e.key] ?? null;
+  if (NAMED.has(e.key)) return e.key;
+  return [...e.key].length === 1 ? e.key : null;
+}
+
+function onKey(e) {
+  if (busy) return;
+  const key = keyOf(e);
+  if (key === null) return;
+  e.preventDefault();
+  if (state === null) {
+    if (key === "Escape") close();
+    return;
+  }
+  const action = press(state, key);
+  if (action?.type === "close") return close();
+  render();
+  if (action?.type === "jump") void go(action.tab);
+  else if (action?.type === "rename") void name(action.tab, action.title);
+}
+
+window.addEventListener("keydown", onKey);
+// Use the background picture only once it has loaded, so a missing one
+// leaves the plain green.
+const picture = new Image();
+picture.onload = () => document.body.classList.add("has-bg");
+picture.src = "background";
+
+fetch("tabs")
+  .then((res) => res.json())
+  .then((data) => {
+    state = createState(data.tabs);
+    render();
+    if (location.search === "?timing") {
+      post("mark", { step: `tabs drawn, visibility ${document.visibilityState}` }).catch(() => {});
+      requestAnimationFrame(() => post("mark", { step: "first frame painted" }).catch(() => {}));
+    }
+  })
+  .catch((err) => { failure = `Couldn't read the tabs: ${err.message}`; render(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+.before-*/
+# Design mocks: kept beside the code, not part of the plugin.
+mocks/
+# A personal background picture for the web panel; optional, not shipped.
+background.*
+.DS_Store
