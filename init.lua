@@ -2,7 +2,8 @@
 -- to one the way hop.nvim does: type two characters of its name, then the
 -- hint that appears on it.
 --
--- Add this to ~/.config/rex/init.lua:
+-- Put this folder (or a link to it) at ~/.config/rex/tabjump, and add this
+-- to ~/.config/rex/init.lua:
 --
 --   require("tabjump").setup{}
 --
@@ -18,6 +19,7 @@
 --     font_bump = 4,                    -- font size steps above your terminal font; 0 for none
 --     web_key = "cmd+j",                -- open the web version (needs rexweb); false for no shortcut
 --     web_width = 0.42,                 -- the web panel's width, as a fraction of the window's width
+--     dir = nil,                        -- the folder holding tabjump.ts; found from this file by default
 --   }
 --
 -- The terminal panel is tabjump.ts. The web panel is tabjump-web.ts, which
@@ -26,8 +28,19 @@
 local M = {}
 
 local SHELL = "com.superlogical.terminal.shell"
-local SCRIPT = os.getenv("HOME") .. "/.config/rex/tabjump/tabjump.ts"
-local WEB_SCRIPT = os.getenv("HOME") .. "/.config/rex/tabjump/tabjump-web.ts"
+
+-- The folder this file is in, which is where the panel's scripts are. Lua
+-- reports the file as it was loaded, with "@" in front under stock Lua.
+local function own_dir()
+  -- Asked about this function, not a stack level: under pcall, level 1 is
+  -- pcall itself.
+  local ok, info = pcall(debug.getinfo, own_dir, "S")
+  local source = ok and type(info) == "table" and info.source or ""
+  local dir = tostring(source):gsub("^@", ""):match("^(.*)[/\\][^/\\]*$")
+  -- Not loaded from a file with a folder in its path: the usual place.
+  return dir or (os.getenv("HOME") .. "/.config/rex/tabjump")
+end
+local DIR = own_dir()
 local WEB_PANE = os.getenv("HOME") .. "/Applications/RexWeb.app/Contents/Resources/rexweb-pane"
 
 local defaults = {
@@ -87,6 +100,10 @@ function M.setup(opts)
   for k, v in pairs(defaults) do
     if opts[k] == nil then opts[k] = v end
   end
+  local dir = opts.dir or DIR
+  local SCRIPT = dir .. "/tabjump.ts"
+  local WEB_SCRIPT = dir .. "/tabjump-web.ts"
+  M.dir = dir
 
   rex.action{
     name = "tabjump_open",
