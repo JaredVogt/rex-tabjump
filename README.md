@@ -11,8 +11,10 @@ You can also rename tabs from the list without visiting them.
 
 - Rex, with the `rex` command on your PATH.
 - Node.js 22.18 or later. The panels are TypeScript that Node runs directly.
-- Optional: [rexweb](https://github.com/acoyfellow/rexweb), for the web
-  version of the panel. The terminal panel doesn't need it.
+- Optional: rexweb, for the [web version of the panel](#the-web-panel). The
+  terminal panel doesn't need it. tabjump is built and tested against
+  [my fork of rexweb](https://github.com/JaredVogt/rexweb), which adds to
+  [the original](https://github.com/acoyfellow/rexweb).
 
 ## Install
 
@@ -86,9 +88,13 @@ and otherwise the `node` on the pane's PATH.
 
 ## The web panel
 
-With rexweb installed, Cmd+J opens the same panel drawn as a web page, with
-more about each tab: its folder, git branch, and what its program last said.
-Restyle it by editing `panel.html`.
+With [rexweb](https://github.com/JaredVogt/rexweb) installed, Cmd+J opens the
+same panel drawn as a web page, with more about each tab: its folder, git
+branch, and what its program last said. Restyle it by editing `panel.html`.
+
+![The web panel listing nine tabs in three sessions, with hints on the words that match the typed letters "re"](docs/web-panel.png)
+
+Here `re` has been typed, and each word that contains it shows a hint.
 
 The default Cmd+J shortcut is bound only when RexWeb is found. The "Jump to
 Tab (Web)" action is always there, and says so if RexWeb is missing.
