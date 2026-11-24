@@ -11,15 +11,17 @@
 --
 --   require("tabjump").setup{
 --     key = "cmd+o",                    -- open the panel; false for no shortcut
---     node = "/opt/homebrew/bin/node",  -- the node that runs tabjump.ts (22.18 or later)
+--     node = nil,                       -- the node that runs tabjump.ts (22.18 or later); looked for by default
 --     columns = 84,                     -- the panel's width in characters
 --     left = 0.25,                      -- its left edge, as a fraction of the window's width
 --     top = 0.12,                       -- its top edge, as a fraction of the window's height
 --     height = 0.7,                     -- its height, as a fraction of the window's height
 --     font_bump = 4,                    -- font size steps above your terminal font; 0 for none
---     web_key = "cmd+j",                -- open the web version (needs rexweb); false for no shortcut
+--     web_key = "cmd+j",                -- open the web version; false for no shortcut. Unless you
+--                                       -- set it yourself, it is bound only when RexWeb is installed
 --     web_width = 0.42,                 -- the web panel's width, as a fraction of the window's width
 --     dir = nil,                        -- the folder holding tabjump.ts; found from this file by default
+--     rexweb = "~/Applications/RexWeb.app",  -- where RexWeb is, for the web panel
 --   }
 --
 -- The terminal panel is tabjump.ts. The web panel is tabjump-web.ts, which
@@ -41,11 +43,26 @@ local function own_dir()
   return dir or (os.getenv("HOME") .. "/.config/rex/tabjump")
 end
 local DIR = own_dir()
-local WEB_PANE = os.getenv("HOME") .. "/Applications/RexWeb.app/Contents/Resources/rexweb-pane"
+local HOME = os.getenv("HOME") or ""
+
+local function exists(path)
+  local file = io.open(path, "r")
+  if file == nil then return false end
+  file:close()
+  return true
+end
+
+-- The node to run the panels with: the first of the usual places that has
+-- one, or failing that whichever `node` is on the pane's PATH.
+local function find_node()
+  for _, path in ipairs{ "/opt/homebrew/bin/node", "/usr/local/bin/node", HOME .. "/.local/bin/node", "/usr/bin/node" } do
+    if exists(path) then return path end
+  end
+  return "node"
+end
 
 local defaults = {
   key = "cmd+o",
-  node = "/opt/homebrew/bin/node",
   columns = 84,
   left = 0.25,
   top = 0.12,
@@ -53,6 +70,7 @@ local defaults = {
   font_bump = 4,
   web_key = "cmd+j",
   web_width = 0.42,
+  rexweb = HOME .. "/Applications/RexWeb.app",
 }
 
 local TERMINAL = "com.superlogical.terminal"
@@ -97,6 +115,9 @@ end
 
 function M.setup(opts)
   opts = opts or {}
+  -- A shortcut you asked for is bound as asked; the default one only when
+  -- there is a RexWeb for it to open.
+  local web_key_given = opts.web_key ~= nil
   for k, v in pairs(defaults) do
     if opts[k] == nil then opts[k] = v end
   end
@@ -104,6 +125,11 @@ function M.setup(opts)
   local SCRIPT = dir .. "/tabjump.ts"
   local WEB_SCRIPT = dir .. "/tabjump-web.ts"
   M.dir = dir
+  if opts.node == nil then opts.node = find_node() end
+  local rexweb = tostring(opts.rexweb):gsub("^~", HOME)
+  local WEB_PANE = rexweb .. "/Contents/Resources/rexweb-pane"
+  local REXWEB_CLI = rexweb .. "/Contents/Resources/rexweb"
+  local has_rexweb = exists(WEB_PANE)
 
   rex.action{
     name = "tabjump_open",
@@ -125,6 +151,7 @@ function M.setup(opts)
                 -- Jump in the app that asked; a CLI caller has no tabs to switch.
                 "TABJUMP_CLIENT=" .. ((ctx.origin ~= "cli" and ctx.client_id) or ""),
                 "TABJUMP_FONT_BUMP=" .. tostring(opts.font_bump),
+                "TABJUMP_REXWEB=" .. REXWEB_CLI,
                 opts.node,
                 SCRIPT,
               },
@@ -143,6 +170,9 @@ function M.setup(opts)
     category = "Navigation",
     keywords = "tab session jump switch go easymotion hop hint navigate web rexweb",
     run = function(ctx)
+      if not exists(WEB_PANE) then
+        error("tabjump: the web panel needs RexWeb, and there is none at " .. rexweb .. ". Use Jump to Tab instead.", 0)
+      end
       local w = math.min(0.95, opts.web_width)
       local _, err = rex.session.new_layer{
         bounds = { math.max(0, math.min(opts.left, 1 - w)), opts.top, w, opts.height },
@@ -156,6 +186,7 @@ function M.setup(opts)
                 "/usr/bin/env",
                 "TABJUMP_CLIENT=" .. ((ctx.origin ~= "cli" and ctx.client_id) or ""),
                 "TABJUMP_PANE=" .. WEB_PANE,
+                "TABJUMP_REXWEB=" .. REXWEB_CLI,
                 opts.node,
                 WEB_SCRIPT,
               },
@@ -170,7 +201,7 @@ function M.setup(opts)
   if opts.key then
     rex.bind(opts.key, "tabjump_open")
   end
-  if opts.web_key then
+  if opts.web_key and (web_key_given or has_rexweb) then
     rex.bind(opts.web_key, "tabjump_web_open")
   end
 end
