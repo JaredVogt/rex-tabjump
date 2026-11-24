@@ -5,6 +5,11 @@ floating panel lists every tab in every session. Type two characters of a
 tab's name, then the hint that appears on it, and you are there. It works the
 way hop.nvim does.
 
+![The terminal panel listing nine tabs in three sessions, with hints on the words that match the typed letters "re"](docs/terminal-panel.png)
+
+Here `re` has been typed, and each word that contains it shows a hint. There
+is also [a web version](#the-web-panel) that shows more about each tab.
+
 You can also rename tabs from the list without visiting them.
 
 ## Requirements
