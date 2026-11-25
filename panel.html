@@ -45,7 +45,7 @@
   body {
     background: var(--bg);
     color: var(--fg);
-    font: 15px/1.35 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    font: 19px/1.35 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
     display: flex;
     flex-direction: column;
     padding: 14px 10px 10px;
@@ -54,8 +54,8 @@
     -webkit-user-select: none;
   }
   header { display: flex; justify-content: space-between; align-items: baseline; padding: 0 8px; }
-  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
-  #count { color: var(--dim); font-size: 12px; }
+  header h1 { font-size: 19px; font-weight: 600; margin: 0; }
+  #count { color: var(--dim); font-size: 16px; }
   /* What has been typed, the mode, and the session the list is narrowed to. */
   #filter {
     display: flex;
@@ -66,7 +66,7 @@
     border-radius: 7px;
     border: 1px solid transparent;
     background: var(--box);
-    min-height: 34px;
+    min-height: 40px;
     white-space: pre;
   }
   #filter.type { border-color: var(--session); }
@@ -74,20 +74,20 @@
   #filter.rename .mode { color: #e6c35c; opacity: 1; }
   #filter .placeholder { color: var(--dim); opacity: 0.6; font-weight: 400; }
   /* The mode is a label, not something typed: keep it faint, like a placeholder. */
-  #filter .mode { color: var(--dim); opacity: 0.5; font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: none; }
-  #filter .typed { flex: 1; font: 600 14px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
+  #filter .mode { color: var(--dim); opacity: 0.5; font-size: 15px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: none; }
+  #filter .typed { flex: 1; font: 600 18px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
   #filter .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--fg); vertical-align: text-bottom; margin-left: 1px; }
-  #filter .scope { color: var(--dim); font-size: 12px; }
+  #filter .scope { color: var(--dim); font-size: 16px; }
   #filter .scope.on { color: var(--session); font-weight: 600; }
   /* The sessions / status switch, and a bubble for each status in the list. */
   #bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 8px 0; white-space: pre; }
   .switch { display: flex; background: var(--box); border-radius: 7px; padding: 2px; }
-  .switch .opt { padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; color: var(--dim); }
+  .switch .opt { padding: 3px 10px; border-radius: 5px; font-size: 16px; font-weight: 600; color: var(--dim); }
   .switch .opt.on { background: var(--selected); color: var(--fg); }
   .bubbles { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
   .bubble {
     display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px;
-    background: var(--box); border: 1px solid transparent; font-size: 12px; font-weight: 600;
+    background: var(--box); border: 1px solid transparent; font-size: 16px; font-weight: 600;
   }
   .bubble .n { color: var(--dim); font-weight: 400; }
   .bubble.on { border-color: currentColor; background: var(--selected); }
@@ -96,7 +96,7 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -144,18 +144,18 @@
   .row.selected .title { font-weight: 600; }
   .right {
     display: flex; gap: 10px; align-items: baseline; justify-content: flex-end;
-    color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; min-width: 0;
+    color: var(--dim); font-size: 16px; white-space: nowrap; overflow: hidden; min-width: 0;
   }
   .right > * { flex: none; }
   .right .from { color: var(--session); font-weight: 600; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  .sub { grid-column: 2; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .when { grid-column: 3; text-align: right; font-size: 12px; white-space: nowrap; }
+  .sub { grid-column: 2; color: var(--dim); font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .when { grid-column: 3; text-align: right; font-size: 16px; white-space: nowrap; }
   .branch { display: inline-flex; align-items: center; gap: 3px; }
-  .branch svg { width: 10px; height: 10px; flex: none; }
+  .branch svg { width: 13px; height: 13px; flex: none; }
   /* A hint sits over the first characters of the word part it stands for. */
   .chip {
-    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font: 600 16px/1 ui-monospace, "SF Mono", Menlo, monospace;
     background: var(--chip-bg);
     color: var(--chip-fg);
     border-radius: 4px;
@@ -169,7 +169,7 @@
   .hinting .seg:not(.match), .hinting .right, .hinting .sub, .hinting .when, .hinting .dot,
   .hinting .tag, .hinting .n, .hinting .meta { opacity: 0.35; }
   /* Filled while something is happening or wants you, hollow when quiet. */
-  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; border: 1.5px solid var(--dim); opacity: 0.6; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1.5px solid var(--dim); opacity: 0.6; }
   .dot.working, .dot.blocked, .dot.failed, .dot.error, .dot.done { background: currentColor; border-color: currentColor; opacity: 1; }
   .working { color: var(--working); }
   .blocked { color: var(--waiting); }
@@ -177,15 +177,15 @@
   .done { color: var(--done); }
   .quiet { color: var(--dim); }
   .tag {
-    font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    font-size: 14px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
     border: 1px solid var(--line); color: var(--dim); border-radius: 4px; padding: 0 4px; flex: none;
   }
   .tag.here { color: var(--session); border-color: var(--session); }
   .tag.bad { color: var(--error); border-color: var(--error); }
   /* In a narrow panel the folder and branch go first. */
-  @media (max-width: 520px) { .right .cwd, .right .branch { display: none; } }
+  @media (max-width: 660px) { .right .cwd, .right .branch { display: none; } }
   .empty { color: var(--dim); padding: 12px 8px; }
-  footer { color: var(--dim); font-size: 12px; padding: 8px 8px 0; }
+  footer { color: var(--dim); font-size: 16px; padding: 8px 8px 0; }
   footer.error { color: var(--error); }
   kbd { font: inherit; color: var(--fg); }
 </style>

@@ -81,7 +81,7 @@ require("tabjump").setup{
   height = 0.7,        -- its height, as a fraction of the window's height
   font_bump = 4,       -- font size steps above your terminal font; 0 for none
   web_key = "cmd+j",   -- open the web panel; false for no shortcut
-  web_width = 0.42,    -- the web panel's width, as a fraction of the window's width
+  web_width = 900,     -- the web panel's width in pixels; 1 or less is a fraction of the window
   rexweb = "~/Applications/RexWeb.app",
   dir = nil,           -- the folder holding tabjump.ts; found by default
 }

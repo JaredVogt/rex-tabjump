@@ -19,7 +19,8 @@
 --     font_bump = 4,                    -- font size steps above your terminal font; 0 for none
 --     web_key = "cmd+j",                -- open the web version; false for no shortcut. Unless you
 --                                       -- set it yourself, it is bound only when RexWeb is installed
---     web_width = 0.42,                 -- the web panel's width, as a fraction of the window's width
+--     web_width = 900,                  -- the web panel's width in pixels; 1 or less is a fraction
+--                                       -- of the window's width instead
 --     dir = nil,                        -- the folder holding tabjump.ts; found from this file by default
 --     rexweb = "~/Applications/RexWeb.app",  -- where RexWeb is, for the web panel
 --   }
@@ -69,7 +70,7 @@ local defaults = {
   height = 0.7,
   font_bump = 4,
   web_key = "cmd+j",
-  web_width = 0.42,
+  web_width = 900,
   rexweb = HOME .. "/Applications/RexWeb.app",
 }
 
@@ -99,6 +100,32 @@ local function window_columns(opts, block_id)
   if rect == nil or type(rect[3]) ~= "number" or rect[3] <= 0 then return nil end
   local cell = type(size.cell_width_px) == "number" and size.cell_width_px > 0 and size.cell_width_px or 9
   return (size.columns / rect[3]) * cell / (cell + 0.5 * opts.font_bump)
+end
+
+-- The window's width in pixels, worked out from the pane the panel opens
+-- over: its width in characters, times a character's width, over its share
+-- of the window.
+local function window_pixels(block_id)
+  if block_id == nil then return nil end
+  local size = rex.block.call(TERMINAL, "size", { block_id = block_id })
+  local view = rex.session.view{}
+  if type(size) ~= "table" or type(size.columns) ~= "number" or view == nil then return nil end
+  local rect = find_rect(view, block_id)
+  if rect == nil or type(rect[3]) ~= "number" or rect[3] <= 0 then return nil end
+  local cell = type(size.cell_width_px) == "number" and size.cell_width_px > 0 and size.cell_width_px or 9
+  return size.columns * cell / rect[3]
+end
+
+-- The web panel's width as a fraction of the window. A `web_width` over 1
+-- is in pixels, so the panel stays the same size on a wider window; if the
+-- window can't be measured, it gets the old 0.42.
+local function web_fraction(opts, block_id)
+  local want = opts.web_width
+  if want > 1 then
+    local total = window_pixels(block_id)
+    want = (total ~= nil and total > 0) and want / total or 0.42
+  end
+  return math.min(0.95, want)
 end
 
 -- Bounds for a panel `columns` characters wide with its left edge at
@@ -173,7 +200,7 @@ function M.setup(opts)
       if not exists(WEB_PANE) then
         error("tabjump: the web panel needs RexWeb, and there is none at " .. rexweb .. ". Use Jump to Tab instead.", 0)
       end
-      local w = math.min(0.95, opts.web_width)
+      local w = web_fraction(opts, ctx.block_id)
       local _, err = rex.session.new_layer{
         bounds = { math.max(0, math.min(opts.left, 1 - w)), opts.top, w, opts.height },
         focus = true,

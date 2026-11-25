@@ -4,4 +4,5 @@ node_modules/
 mocks/
 # A personal background picture for the web panel; optional, not shipped.
 background.*
+backgrounds/
 .DS_Store
