@@ -28,15 +28,26 @@ async function cellHeight(): Promise<number> {
 async function bumpFont(steps: number): Promise<void> {
   if (steps <= 0 || SELF_BLOCK === "") return;
   const before = await cellHeight();
-  if (before === 0) return;
+  if (before === 0 || leaving) return;
   await appDo("client.font.increase");
   let grew = false;
-  for (let i = 0; i < 10 && !grew; i++) {
+  for (let i = 0; i < 10 && !grew && !leaving; i++) {
     await new Promise((resolve) => setTimeout(resolve, 60));
     grew = (await cellHeight()) > before;
   }
+  if (leaving) return;
   if (!grew) return void (await appDo("client.font.decrease"));
-  for (let i = 1; i < steps; i++) await appDo("client.font.increase");
+  for (let i = 1; i < steps && !leaving; i++) await appDo("client.font.increase");
+}
+
+// Font steps go to whichever pane has the keyboard, so none may be sent once
+// the keyboard is about to move: `leaving` stops the steps still to come, and
+// bumpSettled() waits for the one already on its way.
+let leaving = false;
+let bumping: Promise<void> = Promise.resolve();
+function bumpSettled(): Promise<void> {
+  // Not for long: a slow rex shouldn't hold the panel open.
+  return Promise.race([bumping, new Promise<void>((resolve) => setTimeout(resolve, 400))]);
 }
 
 // ---- The panel -----------------------------------------------------------
@@ -57,15 +68,76 @@ function statusColor(status: string): string {
   return "2";
 }
 
-function clip(text: string, width: number): string {
-  const chars = Array.from(text);
-  if (chars.length <= width) return text;
-  return width <= 1 ? chars.slice(0, width).join("") : chars.slice(0, width - 1).join("") + "…";
+// How many columns a character takes: two for CJK and emoji, none for the
+// marks and joiners that attach to the character before them.
+const WIDE: [number, number][] = [
+  [0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60],
+  [0xffe0, 0xffe6], [0x1f300, 0x1faff], [0x20000, 0x3fffd],
+];
+function charWidth(ch: string): number {
+  const code = ch.codePointAt(0) ?? 0;
+  if (code < 0x300) return 1;
+  if (/^[\p{Mn}\p{Me}\p{Cf}]$/u.test(ch)) return 0;
+  if (/^\p{Emoji_Presentation}$/u.test(ch)) return 2;
+  return WIDE.some(([from, to]) => code >= from && code <= to) ? 2 : 1;
 }
 
-// How many characters of `text` show on screen, escape codes aside.
+function widthOf(text: string): number {
+  let width = 0;
+  for (const ch of text) width += charWidth(ch);
+  return width;
+}
+
+// Cuts plain text to `width` columns, ending in "…" when something is lost.
+function clip(text: string, width: number): string {
+  if (widthOf(text) <= width) return text;
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const w = charWidth(ch);
+    if (used + w > width - 1) break;
+    out += ch;
+    used += w;
+  }
+  return width >= 1 ? out + "…" : "";
+}
+
+// The end of `text` that fits in `width` columns.
+function tail(text: string, width: number): string {
+  const chars = Array.from(text);
+  let from = chars.length;
+  for (let used = 0; from > 0; from--) {
+    used += charWidth(chars[from - 1]);
+    if (used > width) break;
+  }
+  return chars.slice(from).join("");
+}
+
+// How many columns of `text` show on screen, escape codes aside.
 function shown(text: string): number {
-  return Array.from(text.replace(/\x1b\[[0-9;]*m/g, "")).length;
+  return widthOf(text.replace(/\x1b\[[0-9;]*m/g, ""));
+}
+
+// Cuts styled text to `width` columns, keeping its escape codes whole. A
+// line longer than the pane would wrap and push the rows below it down.
+function clipStyled(text: string, width: number): string {
+  if (shown(text) <= width) return text;
+  let out = "";
+  let used = 0;
+  for (const part of text.split(/(\x1b\[[0-9;]*m)/)) {
+    if (part.startsWith("\x1b")) {
+      out += part;
+      continue;
+    }
+    for (const ch of part) {
+      const w = charWidth(ch);
+      if (used + w > width - 1) return width >= 1 ? `${out}\x1b[0m…` : "";
+      out += ch;
+      used += w;
+    }
+  }
+  return out;
 }
 
 // Paints a row on the selection colour, edge to edge.
@@ -86,9 +158,19 @@ function draw(segments: Segment[], max: number, plain: string): { text: string; 
       else cells.push({ ch, codes: segment.match ? MATCH : plain });
     });
   }
-  if (cells.length > max) {
-    cells.length = Math.max(0, max - 1);
-    if (max >= 1) cells.push({ ch: "…", codes: plain });
+  // Measured in columns, not characters: a CJK or emoji character takes two.
+  let length = 0;
+  for (const cell of cells) length += charWidth(cell.ch);
+  if (length > max) {
+    while (length > Math.max(0, max - 1)) {
+      const cut = cells.pop();
+      if (cut === undefined) break;
+      length -= charWidth(cut.ch);
+    }
+    if (max >= 1) {
+      cells.push({ ch: "…", codes: plain });
+      length += 1;
+    }
   }
   let text = "";
   for (let i = 0; i < cells.length; ) {
@@ -97,7 +179,7 @@ function draw(segments: Segment[], max: number, plain: string): { text: string; 
     for (; i < cells.length && cells[i].codes === codes; i++) run += cells[i].ch;
     text += sgr(codes, run);
   }
-  return { text, length: cells.length };
+  return { text, length };
 }
 
 export function frame(state: State, cols: number, rows: number): string {
@@ -122,7 +204,7 @@ export function frame(state: State, cols: number, rows: number): string {
   let prompt: string;
   if (v.mode === "rename") {
     const label = "rename › ";
-    const name = Array.from(v.typed).slice(-Math.max(1, width - label.length - 1)).join("");
+    const name = tail(v.typed, Math.max(1, width - label.length - 1));
     const rest = v.typed === "" ? sgr("2", clip(v.placeholder, Math.max(0, width - label.length - 1))) : "";
     prompt = sgr(RENAME, label) + name + cursor + rest;
   } else if (v.mode === "type") {
@@ -157,11 +239,15 @@ export function frame(state: State, cols: number, rows: number): string {
     }
     const tab = row.tab;
     // Under a status heading the session isn't above the row, so it goes here.
-    const extras = [v.group === "status" ? tab.session : "", tab.status, tab.panes > 1 ? `${tab.panes} panes` : ""]
-      .filter(Boolean)
-      .join(" · ");
+    // Cut short if need be, so the title always keeps its four columns.
+    const extras = clip(
+      [v.group === "status" ? tab.session : "", tab.status, tab.panes > 1 ? `${tab.panes} panes` : ""]
+        .filter(Boolean)
+        .join(" · "),
+      Math.max(0, width - 2 - 2 - 2 - 4),
+    );
     const marker = tab.current ? "•" : " ";
-    const room = width - 2 - 2 - (extras ? Array.from(extras).length + 2 : 0);
+    const room = width - 2 - 2 - (extras ? widthOf(extras) + 2 : 0);
     const title = draw(row.segments, Math.max(4, Math.min(TITLE_MAX, room)), dim ? "2" : row.selected ? "1" : "");
     const pad = " ".repeat(Math.max(0, room - title.length));
     const tail = extras ? "  " + sgr(dim ? "2" : statusColor(tab.status), extras) : "";
@@ -185,7 +271,9 @@ export function frame(state: State, cols: number, rows: number): string {
 
   return out
     .slice(0, rows)
-    .map((line) => line + `${ESC}[K`)
+    // One column short of the pane: a character in the last column leaves the
+    // cursor on it, and the erase that follows would take it out.
+    .map((line) => clipStyled(line, Math.max(1, cols - 1)) + `${ESC}[K`)
     .join("\r\n");
 }
 
@@ -241,18 +329,23 @@ function runPanel(tabs: Tab[]): void {
   };
 
   const close = (code: number) => {
+    busy = true;
+    leaving = true;
     out.write(`${ESC}[?25h${ESC}[?1049l`);
     if (stdin.isTTY) stdin.setRawMode(false);
-    process.exit(code);
+    void bumpSettled().then(() => process.exit(code));
   };
 
   const go = async (tab: Tab) => {
     busy = true;
+    leaving = true;
     try {
+      await bumpSettled();
       await jump(tab);
       close(0);
     } catch (err) {
       busy = false;
+      leaving = false;
       state.message = `Couldn't jump: ${err instanceof Error ? err.message : String(err)}`;
       paint();
     }
@@ -323,7 +416,7 @@ async function main(): Promise<void> {
       }
     } else {
       runPanel(tabs);
-      bumpFont(Number.parseInt(process.env.TABJUMP_FONT_BUMP ?? "0", 10) || 0).catch(() => {});
+      bumping = bumpFont(Number.parseInt(process.env.TABJUMP_FONT_BUMP ?? "0", 10) || 0).catch(() => {});
     }
   } catch (err) {
     console.error(`tabjump: ${err instanceof Error ? err.message : String(err)}`);

@@ -201,7 +201,8 @@ async function loadWindow(
     const named = str(block.block_id);
     // A browser pane names the tab but has nothing to report, so the status,
     // program and folder come from the tab's first ordinary pane.
-    const id = web.has(named) && plain !== undefined ? str(plain.block_id) : named;
+    const source = web.has(named) && plain !== undefined ? plain : block;
+    const id = str(source.block_id);
     const [t, s, p] = await Promise.all([
       blockCall(sessionId, named, "title"),
       blockCall(sessionId, id, "program_status"),
@@ -225,7 +226,7 @@ async function loadWindow(
       const home = str(p.home);
       cwd = home !== "" && (dir === home || dir.startsWith(home + "/")) ? "~" + dir.slice(home.length) : dir;
       // git runs on this machine, so only for a folder that is on it.
-      if (hostId === "" || str(block.host_id) === hostId) branch = await branchOf(dir);
+      if (hostId === "" || str(source.host_id) === hostId) branch = await branchOf(dir);
     }
   }
   if (status === "idle") status = "";
@@ -282,7 +283,9 @@ export async function loadTabs(): Promise<Tab[]> {
     sessions.map(async (s) => {
       const id = str(s.session_id);
       const name = str(s.label) || id.slice(-6);
-      const view = await rexJson(["window", "ls", "-s", id, "--json"]);
+      // A session that closed since the listing, or didn't answer, shows no
+      // tabs; the others still do.
+      const view = await rexJson(["window", "ls", "-s", id, "--json"]).catch((): Json => ({}));
       const active = str(view.active_window_id);
       return Promise.all(list(view.windows).map((w) => loadWindow(id, name, active, w, shared)));
     }),

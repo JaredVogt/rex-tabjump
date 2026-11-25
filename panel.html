@@ -462,7 +462,11 @@ picture.onload = () => document.body.classList.add("has-bg");
 picture.src = "background";
 
 fetch("tabs")
-  .then((res) => res.json())
+  .then(async (res) => {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.tabs)) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  })
   .then((data) => {
     state = createState(data.tabs);
     render();
