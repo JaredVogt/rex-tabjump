@@ -202,6 +202,14 @@ function keepSelected(state: State, change: () => void): void {
   state.selected = Math.max(0, tab === undefined ? 0 : visibleTabs(state).indexOf(tab));
 }
 
+/**
+ * Adds tabs that were read late, such as another host's. The selection
+ * stays on the tab it was on.
+ */
+export function addTabs(state: State, tabs: Tab[]): void {
+  keepSelected(state, () => state.tabs.push(...tabs));
+}
+
 /** Groups the list by session or by status. */
 export function setGroup(state: State, group: Group): void {
   keepSelected(state, () => (state.group = group));

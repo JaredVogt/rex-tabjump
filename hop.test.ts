@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  addTabs,
   HINT_KEYS,
   createState,
   press,
@@ -20,6 +21,7 @@ import type { Tab } from "./tabs.ts";
 
 function tab(sessionId: string, session: string, title: string, extra: Partial<Tab> = {}): Tab {
   return {
+    host: "",
     sessionId,
     session,
     windowId: `${sessionId}-${title}`,
@@ -775,4 +777,15 @@ test("Enter jumps to the selected tab in status order", () => {
   state.selected = 0;
   const action = press(state, "Enter");
   assert.equal(action?.type === "jump" && action.tab.title, "deploy");
+});
+
+test("tabs added late join the list and leave the selection on its tab", () => {
+  const state = createState(sample());
+  const selected = state.tabs[state.selected];
+  addTabs(state, [tab("s3", "logs @devbox", "tail errors", { host: "devbox" })]);
+  assert.equal(state.tabs[state.selected], selected);
+  const v = view(state);
+  assert.equal(v.total, 6);
+  assert.equal(v.sessions, 3);
+  assert.equal(titles(v).at(-1), "tail errors");
 });

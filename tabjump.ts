@@ -7,8 +7,8 @@
 // Opened by the `tabjump_open` action in ./init.lua. Run it by hand with
 // `node tabjump.ts --list` to print the rows without the panel.
 
-import { createState, press, renamed, view, type Segment, type State } from "./hop.ts";
-import { SELF_BLOCK, appDo, blockCall, jump, loadTabs, rename, type Tab } from "./tabs.ts";
+import { addTabs, createState, press, renamed, view, type Segment, type State } from "./hop.ts";
+import { SELF_BLOCK, appDo, blockCall, goBack, jump, loadRemoteTabs, loadTabs, rename, type Tab } from "./tabs.ts";
 
 process.title = "rex-tabjump";
 
@@ -313,7 +313,8 @@ export function keysOf(chunk: string): string[] {
   return keys;
 }
 
-function runPanel(tabs: Tab[]): void {
+// Starts the panel, and returns the way to add tabs that arrive later.
+function runPanel(tabs: Tab[]): (more: Tab[]) => void {
   const state = createState(tabs);
   const out = process.stdout;
   const stdin = process.stdin;
@@ -328,12 +329,17 @@ function runPanel(tabs: Tab[]): void {
     out.write(`${ESC}[H${next}`);
   };
 
-  const close = (code: number) => {
+  // `jumped` is false when the panel is closing without going anywhere,
+  // which from a tab on another host means going back to it.
+  const close = (code: number, jumped = false) => {
     busy = true;
     leaving = true;
     out.write(`${ESC}[?25h${ESC}[?1049l`);
     if (stdin.isTTY) stdin.setRawMode(false);
-    void bumpSettled().then(() => process.exit(code));
+    void bumpSettled()
+      .then(() => (jumped ? undefined : goBack()))
+      .catch(() => {})
+      .then(() => process.exit(code));
   };
 
   const go = async (tab: Tab) => {
@@ -342,7 +348,7 @@ function runPanel(tabs: Tab[]): void {
     try {
       await bumpSettled();
       await jump(tab);
-      close(0);
+      close(0, true);
     } catch (err) {
       busy = false;
       leaving = false;
@@ -387,6 +393,11 @@ function runPanel(tabs: Tab[]): void {
     paint();
   });
   paint();
+  return (more) => {
+    if (more.length === 0 || leaving) return;
+    addTabs(state, more);
+    paint();
+  };
 }
 
 // ---- Main ----------------------------------------------------------------
@@ -395,7 +406,7 @@ async function main(): Promise<void> {
   try {
     const tabs = await loadTabs();
     if (process.argv.includes("--list")) {
-      for (const tab of tabs) {
+      for (const tab of [...tabs, ...(await loadRemoteTabs())]) {
         const extras = [
           tab.current ? "current" : "",
           tab.renamed ? "renamed" : "",
@@ -415,7 +426,10 @@ async function main(): Promise<void> {
         console.log([tab.session, tab.title, extras.filter(Boolean).join(", ")].join("\t"));
       }
     } else {
-      runPanel(tabs);
+      // Other hosts take a couple of seconds, so their tabs join the list
+      // once it is already up.
+      const add = runPanel(tabs);
+      loadRemoteTabs().then(add, () => {});
       bumping = bumpFont(Number.parseInt(process.env.TABJUMP_FONT_BUMP ?? "0", 10) || 0).catch(() => {});
     }
   } catch (err) {

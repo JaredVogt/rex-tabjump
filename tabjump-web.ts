@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { join } from "node:path";
-import { SELF_BLOCK, jump, loadTabs, rename } from "./tabs.ts";
+import { SELF_BLOCK, goBack, jump, loadRemoteTabs, loadTabs, rename, type Tab } from "./tabs.ts";
 
 process.title = "rex-tabjump-web";
 
@@ -62,6 +62,17 @@ mark("node running");
 const token = randomBytes(16).toString("hex");
 const tabs = loadTabs(); // started now, so it is ready when the page asks
 void tabs.then(() => mark("tabs read from rex"), () => {});
+// Other hosts take a couple of seconds, so the page asks for their tabs
+// separately and adds them to the list once it is up.
+const remote = loadRemoteTabs().catch((): Tab[] => []);
+let arrived: Tab[] = [];
+void remote.then((found) => {
+  arrived = found;
+  mark("tabs read from other hosts");
+});
+// The list as the page has it: this machine's tabs, then the others once
+// they have arrived. The page names a tab by its place in it.
+const listed = async (): Promise<Tab[]> => [...(await tabs), ...arrived];
 
 // The selection logic the page shares with the terminal panel, as JavaScript.
 // Its only import is a type, which stripping removes.
@@ -178,11 +189,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (route === "GET tabs") {
     return send(res, 200, "application/json", JSON.stringify({ tabs: await tabs }));
   }
+  if (route === "GET more") {
+    return send(res, 200, "application/json", JSON.stringify({ tabs: await remote }));
+  }
   if (route === "POST jump") {
     const input = await body(req);
     const index =
       typeof input === "object" && input !== null && "index" in input ? Number(input.index) : -1;
-    const tab = (await tabs)[index];
+    const tab = (await listed())[index];
     if (tab === undefined) return send(res, 400, "application/json", JSON.stringify({ error: "no such tab" }));
     await jump(tab);
     send(res, 200, "application/json", "{}");
@@ -191,7 +205,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (route === "POST rename") {
     const input = await body(req);
     const fields = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
-    const tab = (await tabs)[Number(fields.index ?? -1)];
+    const tab = (await listed())[Number(fields.index ?? -1)];
     if (tab === undefined || typeof fields.title !== "string") {
       return send(res, 400, "application/json", JSON.stringify({ error: "no such tab" }));
     }
@@ -199,6 +213,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return send(res, 200, "application/json", "{}");
   }
   if (route === "POST close") {
+    // Closed without a jump: back to the tab it was opened from, if that
+    // is on another host.
+    await goBack().catch(() => {});
     send(res, 200, "application/json", "{}");
     return shutdown(0);
   }

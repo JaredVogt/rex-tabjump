@@ -84,12 +84,25 @@ require("tabjump").setup{
   web_width = 900,     -- the web panel's width in pixels; 1 or less is a fraction of the window
   rexweb = "~/Applications/RexWeb.app",
   dir = nil,           -- the folder holding tabjump.ts; found by default
+  rex = nil,           -- the rex command, for tabs on other hosts; looked for by default
 }
 ```
 
 Without `node`, tabjump uses the first of `/opt/homebrew/bin/node`,
 `/usr/local/bin/node`, `~/.local/bin/node` and `/usr/bin/node` that exists,
 and otherwise the `node` on the pane's PATH.
+
+## Other hosts
+
+Tabs on the hosts that `rex hosts` lists are in the panel too, under their
+session's name followed by `@` and the host. A host takes a couple of
+seconds to answer, so its tabs join the list shortly after the panel opens,
+and jumping to one takes as long again.
+
+The panel always runs on this machine. Opened from a tab on another host, it
+appears in one of this machine's sessions, and closing it without a jump
+takes you back to the tab you were on. Tabs on another host show no git
+branch.
 
 ## The web panel
 

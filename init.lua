@@ -23,6 +23,8 @@
 --                                       -- of the window's width instead
 --     dir = nil,                        -- the folder holding tabjump.ts; found from this file by default
 --     rexweb = "~/Applications/RexWeb.app",  -- where RexWeb is, for the web panel
+--     rex = nil,                        -- the rex command, used to open the panel from a tab on
+--                                       -- another host; looked for by default
 --   }
 --
 -- The terminal panel is tabjump.ts. The web panel is tabjump-web.ts, which
@@ -60,6 +62,25 @@ local function find_node()
     if exists(path) then return path end
   end
   return "node"
+end
+
+-- The rex command. Lua asks Rex for most things directly, but from a tab on
+-- another host those calls go to that host, and this is the way back to
+-- the server on this machine.
+local function find_rex()
+  local bin = os.getenv("REX_BIN_DIR")
+  local places = {
+    bin and (bin .. "/rex") or "",
+    HOME .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex",
+    "/opt/homebrew/bin/rex",
+    "/usr/local/bin/rex",
+    HOME .. "/.local/bin/rex",
+    "/usr/bin/rex",
+  }
+  for _, path in ipairs(places) do
+    if path ~= "" and exists(path) then return path end
+  end
+  return "rex"
 end
 
 local defaults = {
@@ -140,6 +161,62 @@ local function bounds(opts, block_id)
   return { x, opts.top, w, opts.height }
 end
 
+-- Runs the rex command on this machine and returns what it printed as a
+-- table, or nil and why not.
+local function rex_json(rex_bin, args)
+  local argv = { rex_bin }
+  for _, arg in ipairs(args) do argv[#argv + 1] = arg end
+  local result, err = rex.exec(argv, { timeout = 8 })
+  if result == nil then return nil, tostring(err) end
+  if not result.ok then return nil, (result.stderr ~= nil and result.stderr ~= "") and result.stderr or "rex failed" end
+  local ok, value = pcall(rex.json.decode, result.stdout)
+  if not ok or type(value) ~= "table" then return nil, "rex printed something that isn't JSON" end
+  return value
+end
+
+-- A session on this machine to open the panel in: one the app that asked
+-- has open, or failing that any app's, or any at all.
+local function local_session(rex_bin, client_id)
+  local found = rex_json(rex_bin, { "client", "ls", "--json" })
+  local fallback = nil
+  for _, client in ipairs((found or {}).clients or {}) do
+    local first = type(client.session_ids) == "table" and client.session_ids[1] or nil
+    if first ~= nil then
+      if client.client_id == client_id then return first end
+      if fallback == nil and type(client.info) == "table" and client.info.kind == "app" then fallback = first end
+    end
+  end
+  if fallback ~= nil then return fallback end
+  local sessions = rex_json(rex_bin, { "ls", "--json" })
+  local any = ((sessions or {}).sessions or {})[1]
+  return any and any.session_id or nil
+end
+
+-- Opens the panel's layer, and returns nil or what went wrong.
+--
+-- A pane runs on its session's host. From a tab on another host that is a
+-- machine with no tabjump and maybe no node, so the panel opens in a
+-- session on this machine instead and the app is switched to it. The panel
+-- is told where it came from, to go back if it closes without a jump.
+local function open_layer(rex_bin, ctx, layer)
+  if ctx.server == nil then
+    local _, err = rex.session.new_layer(layer)
+    return err
+  end
+  local session = local_session(rex_bin, ctx.client_id)
+  if session == nil then return "there is no session on this machine to open it in" end
+  layer.session_id = session
+  local command = layer.layout.block.options.command
+  table.insert(command, 2, "TABJUMP_RETURN=" .. tostring(ctx.session_id or ""))
+  table.insert(command, 3, "TABJUMP_RETURN_HOST=" .. tostring(ctx.server))
+  local _, err = rex_json(rex_bin, { "api", "call", "session.new_layer", rex.json.encode(layer) })
+  if err ~= nil then return err end
+  -- Run by the app once this action returns. Without an app to ask (a CLI
+  -- call, say) the panel is still there, in the session it opened in.
+  pcall(rex.client.queue, "session.select", { session_id = session })
+  return nil
+end
+
 function M.setup(opts)
   opts = opts or {}
   -- A shortcut you asked for is bound as asked; the default one only when
@@ -153,6 +230,7 @@ function M.setup(opts)
   local WEB_SCRIPT = dir .. "/tabjump-web.ts"
   M.dir = dir
   if opts.node == nil then opts.node = find_node() end
+  local REX = opts.rex or find_rex()
   local rexweb = tostring(opts.rexweb):gsub("^~", HOME)
   local WEB_PANE = rexweb .. "/Contents/Resources/rexweb-pane"
   local REXWEB_CLI = rexweb .. "/Contents/Resources/rexweb"
@@ -165,7 +243,7 @@ function M.setup(opts)
     category = "Navigation",
     keywords = "tab session jump switch go easymotion hop hint navigate",
     run = function(ctx)
-      local _, err = rex.session.new_layer{
+      local err = open_layer(REX, ctx, {
         bounds = bounds(opts, ctx.block_id),
         focus = true,
         layout = {
@@ -185,7 +263,7 @@ function M.setup(opts)
             },
           },
         },
-      }
+      })
       if err ~= nil then error("tabjump: couldn't open the panel: " .. tostring(err), 0) end
     end,
   }
@@ -201,7 +279,7 @@ function M.setup(opts)
         error("tabjump: the web panel needs RexWeb, and there is none at " .. rexweb .. ". Use Jump to Tab instead.", 0)
       end
       local w = web_fraction(opts, ctx.block_id)
-      local _, err = rex.session.new_layer{
+      local err = open_layer(REX, ctx, {
         bounds = { math.max(0, math.min(opts.left, 1 - w)), opts.top, w, opts.height },
         focus = true,
         layout = {
@@ -220,7 +298,7 @@ function M.setup(opts)
             },
           },
         },
-      }
+      })
       if err ~= nil then error("tabjump: couldn't open the web panel: " .. tostring(err), 0) end
     end,
   }

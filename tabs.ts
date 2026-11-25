@@ -2,7 +2,7 @@
 // (tabjump-web.ts): reads every tab in every Rex session, labels them, and
 // jumps to one.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { join } from "node:path";
 
 // Label letters. j and k are left out: they move the selection.
@@ -14,8 +14,17 @@ const TERMINAL = "com.superlogical.terminal";
 const REXWEB =
   process.env.TABJUMP_REXWEB ??
   join(process.env.HOME ?? "", "Applications/RexWeb.app/Contents/Resources/rexweb");
+// Reads and switches tabs on other hosts; see the top of that file.
+const REMOTE = join(import.meta.dirname, "remote.lua");
+// Set when the panel was opened from a tab on another host: that tab's
+// session, and the host as the app names it. Closing the panel without
+// jumping goes back there.
+const RETURN_SESSION = process.env.TABJUMP_RETURN ?? "";
+const RETURN_HOST = process.env.TABJUMP_RETURN_HOST ?? "";
 
 export type Tab = {
+  // The machine the tab is on, as `rex hosts` names it; "" for this one.
+  host: string;
   sessionId: string;
   session: string;
   windowId: string;
@@ -52,9 +61,9 @@ export type Tab = {
 
 // ---- Reading Rex ---------------------------------------------------------
 
-export function rex(args: string[]): Promise<string> {
+export function rex(args: string[], timeout = 5000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(REX, args, { timeout: 5000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(REX, args, { timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr.trim() || err.message));
       else resolve(stdout);
     });
@@ -110,25 +119,35 @@ function webPanes(): Promise<Map<string, Page>> {
   });
 }
 
-// The names of the apps that have each session open, by session ID.
-async function sessionClients(): Promise<Map<string, string[]>> {
+// The names of the apps that have each session open, by session ID, from a
+// server's list of clients.
+function clientsBySession(clients: Json[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  try {
-    for (const client of list((await rexJson(["client", "ls", "--json"])).clients)) {
-      const info = obj(client.info);
-      if (str(info.kind) !== "app" || str(client.connection_state) !== "connected") continue;
-      const name = str(info.label) || str(info.name) || str(info.platform);
-      if (name === "") continue;
-      for (const id of Array.isArray(client.session_ids) ? client.session_ids : []) {
-        const names = out.get(str(id)) ?? [];
-        if (!names.includes(name)) names.push(name);
-        out.set(str(id), names);
-      }
+  for (const client of clients) {
+    const info = obj(client.info);
+    if (str(info.kind) !== "app" || str(client.connection_state) !== "connected") continue;
+    const name = str(info.label) || str(info.name) || str(info.platform);
+    if (name === "") continue;
+    for (const id of Array.isArray(client.session_ids) ? client.session_ids : []) {
+      const names = out.get(str(id)) ?? [];
+      if (!names.includes(name)) names.push(name);
+      out.set(str(id), names);
     }
-  } catch {
-    // An older Rex without the listing: show no clients.
   }
   return out;
+}
+
+// This machine's clients; none from an older Rex without the listing.
+const localClients: Promise<Json[]> = rexJson(["client", "ls", "--json"]).then(
+  (found) => list(found.clients),
+  () => [],
+);
+
+// The name of the app that opened the panel, to find it again on another
+// host, where it is a different client.
+async function appLabel(): Promise<string> {
+  const mine = (await localClients).find((client) => str(client.client_id) === CLIENT);
+  return str(obj(mine?.info).label);
 }
 
 // The git branch of a folder, or "" when it isn't in a repository. One git
@@ -157,19 +176,32 @@ function exitCode(value: unknown): number {
   return 0;
 }
 
-type Shared = { web: Map<string, Page>; clients: Map<string, string[]>; hostId: string };
+type Shared = {
+  host: string; // "" for this machine
+  web: Map<string, Page>;
+  clients: Map<string, string[]>;
+  hostId: string;
+  // Asks a terminal for its title, status or process.
+  read: (sessionId: string, blockId: string, method: string) => Promise<Json>;
+};
 
 async function loadWindow(
   sessionId: string,
   session: string,
   activeWindowId: string,
   win: Json,
-  { web, clients, hostId }: Shared,
+  { host, web, clients, hostId, read }: Shared,
 ): Promise<Tab> {
   const layers = list(win.layers);
   const blocks = layers.flatMap((layer) => list(layer.blocks));
   const others = blocks.filter((b) => str(b.block_id) !== SELF_BLOCK);
-  const current = SELF_BLOCK !== "" && others.length !== blocks.length;
+  // The tab you are on: the one holding this panel. Opened from a tab on
+  // another host, the panel sits in a session here that you weren't in, so
+  // then it is the tab that host's session is showing.
+  const current =
+    RETURN_SESSION === ""
+      ? host === "" && SELF_BLOCK !== "" && others.length !== blocks.length
+      : sessionId === RETURN_SESSION && str(win.window_id) === activeWindowId;
 
   // The block that names the tab: the focused one, unless that's this panel.
   const focusedId = str(win.focused_block_id);
@@ -204,9 +236,9 @@ async function loadWindow(
     const source = web.has(named) && plain !== undefined ? plain : block;
     const id = str(source.block_id);
     const [t, s, p] = await Promise.all([
-      blockCall(sessionId, named, "title"),
-      blockCall(sessionId, id, "program_status"),
-      blockCall(sessionId, id, "process"),
+      read(sessionId, named, "title"),
+      read(sessionId, id, "program_status"),
+      read(sessionId, id, "process"),
     ]);
     title = str(t.title);
     const record = obj(list(s.records)[0]);
@@ -226,7 +258,7 @@ async function loadWindow(
       const home = str(p.home);
       cwd = home !== "" && (dir === home || dir.startsWith(home + "/")) ? "~" + dir.slice(home.length) : dir;
       // git runs on this machine, so only for a folder that is on it.
-      if (hostId === "" || str(source.host_id) === hostId) branch = await branchOf(dir);
+      if (host === "" && (hostId === "" || str(source.host_id) === hostId)) branch = await branchOf(dir);
     }
   }
   if (status === "idle") status = "";
@@ -242,6 +274,7 @@ async function loadWindow(
   const renamed = windowLabel !== "" && !/^Window [0-9a-f]{8}$/.test(windowLabel);
   const blockLabel = block === undefined ? "" : str(block.label);
   return {
+    host,
     sessionId,
     session,
     windowId: str(win.window_id),
@@ -274,10 +307,16 @@ export async function loadTabs(): Promise<Tab[]> {
   const [listing, web, clients, who] = await Promise.all([
     rexJson(["ls", "--json"]),
     webPanes(),
-    sessionClients(),
+    localClients,
     rexJson(["whoami", "--json"]).catch((): Json => ({})),
   ]);
-  const shared: Shared = { web, clients, hostId: str(who.host_id) };
+  const shared: Shared = {
+    host: "",
+    web,
+    clients: clientsBySession(clients),
+    hostId: str(who.host_id),
+    read: blockCall,
+  };
   const sessions = list(listing.sessions);
   const perSession = await Promise.all(
     sessions.map(async (s) => {
@@ -307,6 +346,63 @@ export async function loadTabs(): Promise<Tab[]> {
   return perSession.flat();
 }
 
+// One host's tabs, read over a single connection by remote.lua.
+async function loadHost(host: string): Promise<Tab[]> {
+  const args = JSON.stringify({ mode: "list", host });
+  const found = obj(JSON.parse(await rex(["do", REMOTE, "--args", args], 10000)));
+  const blocks = obj(found.blocks);
+  const shared: Shared = {
+    host,
+    web: new Map(),
+    clients: clientsBySession(list(found.clients)),
+    hostId: "",
+    read: async (_sessionId, blockId, method) => obj(obj(blocks[blockId])[method]),
+  };
+  const perSession = await Promise.all(
+    list(found.sessions).map((s) => {
+      const id = str(s.session_id);
+      const view = obj(s.view);
+      // The host's name goes with the session's, to tell it from one here.
+      const name = `${str(s.label) || id.slice(-6)} @${host}`;
+      return Promise.all(
+        list(view.windows).map((w) => loadWindow(id, name, str(view.active_window_id), w, shared)),
+      );
+    }),
+  );
+  return perSession.flat();
+}
+
+// The tabs on every other host this machine knows, which take a couple of
+// seconds to arrive. A host that doesn't answer has none.
+export async function loadRemoteTabs(): Promise<Tab[]> {
+  const known = await rexJson(["hosts", "--json"]).catch((): Json => ({}));
+  const hosts = list(known.hosts)
+    .map((entry) => str(obj(entry.host).label))
+    .filter((label) => label !== "");
+  const perHost = await Promise.all(hosts.map((host) => loadHost(host).catch((): Tab[] => [])));
+  return perHost.flat();
+}
+
+// The `rex` arguments that have the app show a session on another host.
+// `host` may be "" or a name this machine doesn't use for it; remote.lua
+// then looks for the session.
+async function selectArgs(host: string, sessionId: string, windowId: string): Promise<string[]> {
+  const args: Record<string, string> = { mode: "select", host, session_id: sessionId, app: await appLabel() };
+  if (windowId !== "") args.window_id = windowId;
+  return ["do", REMOTE, "--args", JSON.stringify(args)];
+}
+
+/**
+ * Goes back to the tab the panel was opened from, when that tab is on
+ * another host and the panel is closing without a jump. It doesn't wait:
+ * the switch takes a couple of seconds, and outlives this process.
+ */
+export async function goBack(): Promise<void> {
+  if (RETURN_SESSION === "") return;
+  const args = await selectArgs(RETURN_HOST, RETURN_SESSION, "");
+  spawn(REX, args, { detached: true, stdio: "ignore" }).unref();
+}
+
 // Performs one of the app's actions, in the app that opened the panel.
 export async function appDo(...args: string[]): Promise<void> {
   if (CLIENT === "") return void (await rex(["do", ...args]));
@@ -320,6 +416,9 @@ export async function appDo(...args: string[]): Promise<void> {
 }
 
 export async function jump(tab: Tab): Promise<void> {
+  if (tab.host !== "") {
+    return void (await rex(await selectArgs(tab.host, tab.sessionId, tab.windowId), 15000));
+  }
   if (!tab.current) await appDo("session.select", `session_id=${tab.sessionId}`, `window_id=${tab.windowId}`);
   // After the switch, not before: on showing a tab the app focuses the pane
   // it last had focused there, which would undo a focus set first.
@@ -331,5 +430,6 @@ export async function jump(tab: Tab): Promise<void> {
 // Names a tab, or with "" gives it back the name it would have on its own.
 export async function rename(tab: Tab, title: string): Promise<void> {
   // After "--", so a name that starts with a dash isn't read as a flag.
-  await rex(["window", "rename", "-s", tab.sessionId, "--", tab.windowId, title]);
+  const server = tab.host === "" ? [] : ["-S", tab.host];
+  await rex([...server, "window", "rename", "-s", tab.sessionId, "--", tab.windowId, title], 15000);
 }

@@ -206,7 +206,7 @@
 // All the behaviour (modes, matching, hints) is in hop.ts, shared with the
 // terminal panel and served here with its types stripped. This script only
 // maps keys in and draws the view out.
-import { createState, press, renamed, setGroup, statusOf, toggleStatus, view } from "./hop.js";
+import { addTabs, createState, press, renamed, setGroup, statusOf, toggleStatus, view } from "./hop.js";
 
 const el = (id) => document.getElementById(id);
 const NAMED = new Set(["Escape", "Enter", "Backspace", "Tab", "ArrowUp", "ArrowDown"]);
@@ -470,6 +470,16 @@ fetch("tabs")
   .then((data) => {
     state = createState(data.tabs);
     render();
+    // Tabs on other hosts take a couple of seconds; they join the list
+    // when they arrive, and a host that doesn't answer adds none.
+    fetch("more")
+      .then((res) => (res.ok ? res.json() : { tabs: [] }))
+      .then((more) => {
+        if (!Array.isArray(more.tabs) || more.tabs.length === 0 || busy) return;
+        addTabs(state, more.tabs);
+        render();
+      })
+      .catch(() => {});
     if (location.search === "?timing") {
       post("mark", { step: `tabs drawn, visibility ${document.visibilityState}` }).catch(() => {});
       requestAnimationFrame(() => post("mark", { step: "first frame painted" }).catch(() => {}));
