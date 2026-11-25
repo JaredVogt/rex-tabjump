@@ -3,7 +3,8 @@
 // jumps to one.
 
 import { execFile, spawn } from "node:child_process";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 // Label letters. j and k are left out: they move the selection.
 export const ALPHABET = "asdfghlqwertyuiopzxcvbnm";
@@ -21,6 +22,26 @@ const REMOTE = join(import.meta.dirname, "remote.lua");
 // jumping goes back there.
 const RETURN_SESSION = process.env.TABJUMP_RETURN ?? "";
 const RETURN_HOST = process.env.TABJUMP_RETURN_HOST ?? "";
+// The session on this machine the panel last saw you in, kept for init.lua:
+// opened from a tab on another host, the panel appears in that session.
+// Rex doesn't say which session you used last, so this is what the panel
+// knows: where it was opened and where it took you. A session you went to
+// some other way isn't noticed.
+const LAST_LOCAL = join(
+  process.env.XDG_STATE_HOME || join(process.env.HOME ?? "", ".local/state"),
+  "rex-tabjump",
+  "last-session",
+);
+
+function rememberLocal(sessionId: string): void {
+  if (sessionId === "") return;
+  try {
+    mkdirSync(dirname(LAST_LOCAL), { recursive: true });
+    writeFileSync(LAST_LOCAL, `${sessionId}\n`);
+  } catch {
+    // Only a convenience: without it init.lua picks a session itself.
+  }
+}
 
 export type Tab = {
   // The machine the tab is on, as `rex hosts` names it; "" for this one.
@@ -304,6 +325,8 @@ async function loadWindow(
 }
 
 export async function loadTabs(): Promise<Tab[]> {
+  // Opened from a tab on this machine, the panel's session is where you are.
+  if (RETURN_SESSION === "" && SELF_BLOCK !== "") rememberLocal(process.env.REX_SESSION ?? "");
   const [listing, web, clients, who] = await Promise.all([
     rexJson(["ls", "--json"]),
     webPanes(),
@@ -420,6 +443,7 @@ export async function jump(tab: Tab): Promise<void> {
     return void (await rex(await selectArgs(tab.host, tab.sessionId, tab.windowId), 15000));
   }
   if (!tab.current) await appDo("session.select", `session_id=${tab.sessionId}`, `window_id=${tab.windowId}`);
+  rememberLocal(tab.sessionId);
   // After the switch, not before: on showing a tab the app focuses the pane
   // it last had focused there, which would undo a focus set first.
   if (tab.focusBlock !== "") {

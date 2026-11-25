@@ -100,8 +100,9 @@ seconds to answer, so its tabs join the list shortly after the panel opens,
 and jumping to one takes as long again.
 
 The panel always runs on this machine. Opened from a tab on another host, it
-appears in one of this machine's sessions, and closing it without a jump
-takes you back to the tab you were on. Tabs on another host show no git
+appears in the session here that the panel last saw you in: the one you last
+opened it from or jumped to. Closing it without a jump takes you back to the
+tab you were on. Tabs on another host show no git
 branch.
 
 ## The web panel

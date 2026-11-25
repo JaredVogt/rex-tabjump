@@ -174,9 +174,27 @@ local function rex_json(rex_bin, args)
   return value
 end
 
--- A session on this machine to open the panel in: one the app that asked
--- has open, or failing that any app's, or any at all.
+-- The session on this machine the panel last saw you in, which tabs.ts
+-- keeps in a file; nil if it never has.
+local function remembered_session()
+  local state = os.getenv("XDG_STATE_HOME")
+  if state == nil or state == "" then state = HOME .. "/.local/state" end
+  local file = io.open(state .. "/rex-tabjump/last-session", "r")
+  if file == nil then return nil end
+  local id = file:read("*l")
+  file:close()
+  return id
+end
+
+-- A session on this machine to open the panel in: the one the panel last
+-- saw you in if it is still there, or failing that one the app that asked
+-- has open, or any app's, or any at all.
 local function local_session(rex_bin, client_id)
+  local sessions = ((rex_json(rex_bin, { "ls", "--json" }) or {}).sessions or {})
+  local want = remembered_session()
+  for _, session in ipairs(sessions) do
+    if want ~= nil and session.session_id == want then return want end
+  end
   local found = rex_json(rex_bin, { "client", "ls", "--json" })
   local fallback = nil
   for _, client in ipairs((found or {}).clients or {}) do
@@ -187,9 +205,7 @@ local function local_session(rex_bin, client_id)
     end
   end
   if fallback ~= nil then return fallback end
-  local sessions = rex_json(rex_bin, { "ls", "--json" })
-  local any = ((sessions or {}).sessions or {})[1]
-  return any and any.session_id or nil
+  return sessions[1] and sessions[1].session_id or nil
 end
 
 -- Opens the panel's layer, and returns nil or what went wrong.
